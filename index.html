@@ -7,6 +7,22 @@
     <title>VR-Test · Holo-Graph</title>
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 
+    <style>
+      html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; }
+      #cardboard-btn {
+        position: fixed; right: 14px; bottom: 14px; z-index: 9999;
+        font-family: system-ui, sans-serif; font-size: 15px; letter-spacing: 0.5px;
+        color: #eaf2ff; background: rgba(18, 50, 92, 0.85);
+        border: 1px solid #7fb2e8; border-radius: 9px; padding: 11px 18px;
+        box-shadow: 0 0 18px rgba(60, 150, 255, 0.45);
+      }
+      /* Im Stereo-Modus eine dezente Mittellinie als Trennung der Augen */
+      body.vr-active::after {
+        content: ""; position: fixed; top: 0; bottom: 0; left: 50%; width: 1px;
+        background: rgba(127, 178, 232, 0.25); z-index: 9998; pointer-events: none;
+      }
+    </style>
+
     <script>
       /* global AFRAME, THREE */
 
@@ -166,6 +182,62 @@
         },
       });
 
+      // ====================================================================
+      //  cardboard: manueller Stereo-Split fuer iOS-Safari (kein WebXR noetig)
+      //  Rendert die Szene in zwei Viewports (linkes/rechtes Auge). Das
+      //  Kopf-Tracking kommt weiter von A-Frames look-controls (Gyroskop).
+      // ====================================================================
+      AFRAME.registerComponent("cardboard", {
+        init() {
+          this.active = false;
+          this.stereo = new THREE.StereoCamera();
+          this.stereo.aspect = 0.5;
+          this.stereo.eyeSep = 0.064;
+          this.size = new THREE.Vector2();
+
+          if (this.el.renderer) this.patchRenderer();
+          else this.el.addEventListener("loaded", () => this.patchRenderer(), { once: true });
+
+          this.btn = document.getElementById("cardboard-btn");
+          this.btn.addEventListener("click", () => this.toggle());
+        },
+
+        patchRenderer() {
+          const renderer = this.el.renderer;
+          const realRender = renderer.render.bind(renderer);
+          const self = this;
+          renderer.render = function (scene, camera) {
+            renderer.getSize(self.size);
+            const w = self.size.width, h = self.size.height;
+            if (!self.active) {
+              // sicherstellen, dass der Viewport voll ist (nach Stereo-Frame)
+              renderer.setScissorTest(false);
+              renderer.setViewport(0, 0, w, h);
+              realRender(scene, camera);
+              return;
+            }
+            scene.updateMatrixWorld();
+            self.stereo.update(camera);
+            if (renderer.autoClear) renderer.clear();
+            renderer.setScissorTest(true);
+            renderer.setScissor(0, 0, w / 2, h);
+            renderer.setViewport(0, 0, w / 2, h);
+            realRender(scene, self.stereo.cameraL);
+            renderer.setScissor(w / 2, 0, w / 2, h);
+            renderer.setViewport(w / 2, 0, w / 2, h);
+            realRender(scene, self.stereo.cameraR);
+            renderer.setScissorTest(false);
+          };
+        },
+
+        toggle() {
+          this.active = !this.active;
+          this.btn.textContent = this.active ? "✕ Stereo beenden" : "⛶ Cardboard";
+          document.body.classList.toggle("vr-active", this.active);
+          if (this.active) window.scrollTo(0, 1); // Adressleiste verstecken
+        },
+      });
+
       // Sternenfeld als ruhiger Hintergrund -------------------------------
       AFRAME.registerComponent("stars", {
         init() {
@@ -195,11 +267,14 @@
   </head>
 
   <body>
+    <button id="cardboard-btn">⛶ Cardboard</button>
+
     <a-scene
       background="color: #05070D"
       renderer="colorManagement: true; antialias: true"
       device-orientation-permission-ui="enabled: true"
-      vr-mode-ui="enabled: true">
+      vr-mode-ui="enabled: false"
+      cardboard>
 
       <a-entity stars></a-entity>
       <a-entity iron-graph></a-entity>
