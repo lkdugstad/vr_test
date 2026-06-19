@@ -276,7 +276,7 @@
             this.sub = document.createElement("a-entity");
             this.items.forEach(([label, fn], i) => {
               const b = this.makeButton(label, fn);
-              b.setAttribute("position", "0 " + (-0.34 * (i + 1)) + " 0");
+              b.setAttribute("position", "0 " + (-0.44 * (i + 1)) + " 0");
               this.sub.appendChild(b);
             });
             this.el.appendChild(this.sub);
@@ -287,31 +287,25 @@
         },
 
         makeButton(label, onClick, color = "#12325c") {
-          const w = 1.1, h = 0.26;
+          const w = 1.25, h = 0.34;
+          // EIN Entity mit Geometrie + Text: jeder Raycast-Treffer (Plane
+          // ODER Text-Mesh) mappt auf dieses el -> Events feuern direkt hier.
           const btn = document.createElement("a-entity");
           btn.classList.add("gaze");
+          btn.setAttribute("geometry", { primitive: "plane", width: w, height: h });
+          btn.setAttribute("material", "shader: flat; color: " + color + "; opacity: 0.92; side: double; transparent: true");
+          btn.setAttribute("text", { value: label, align: "center", color: "#eaf2ff", width: 1.15, zOffset: 0.02 });
 
+          // dekorativer Rahmen (hinter der Plane, nur Optik)
           const border = document.createElement("a-plane");
-          border.setAttribute("width", w + 0.04);
-          border.setAttribute("height", h + 0.04);
+          border.setAttribute("width", w + 0.05);
+          border.setAttribute("height", h + 0.05);
           border.setAttribute("position", "0 0 -0.01");
           border.setAttribute("material", "shader: flat; color: #7fb2e8; opacity: 0.5; side: double; transparent: true");
           btn.appendChild(border);
 
-          const bg = document.createElement("a-plane");
-          bg.setAttribute("width", w);
-          bg.setAttribute("height", h);
-          bg.setAttribute("material", "shader: flat; color: " + color + "; opacity: 0.9; side: double; transparent: true");
-          btn.appendChild(bg);
-
-          const t = document.createElement("a-entity");
-          t.setAttribute("text", { value: label, align: "center", color: "#eaf2ff", width: 1 });
-          t.setAttribute("position", "0 0 0.01");
-          btn.appendChild(t);
-
-          // Events bubblen von den Kind-Meshes hoch zum Button
-          btn.addEventListener("mouseenter", () => bg.setAttribute("material", "color", "#2a78c8"));
-          btn.addEventListener("mouseleave", () => bg.setAttribute("material", "color", color));
+          btn.addEventListener("mouseenter", () => btn.setAttribute("material", "color", "#2a78c8"));
+          btn.addEventListener("mouseleave", () => btn.setAttribute("material", "color", color));
           btn.addEventListener("click", onClick);
           return btn;
         },
@@ -428,8 +422,8 @@
           </a-cursor>
         </a-camera>
 
-        <!-- Welt-fixes Gaze-Menue vor dem Nutzer -->
-        <a-entity gaze-menu position="0 1.45 -2"></a-entity>
+        <!-- Welt-fixes Gaze-Menue vor dem Nutzer, auf Augenhoehe -->
+        <a-entity gaze-menu position="0 1.6 -1.9"></a-entity>
       </a-entity>
     </a-scene>
   </body>
