@@ -238,6 +238,142 @@
         },
       });
 
+      // ====================================================================
+      //  gaze-menu: per Blick bedienbares Menue. Ein "MENU"-Button oeffnet
+      //  vier weitere Buttons (Ball / roter Zylinder / Kaefig / Schliessen).
+      //  Buttons tragen class "gaze"; der a-cursor feuert per Fuse 'click'.
+      // ====================================================================
+      AFRAME.registerComponent("gaze-menu", {
+        init() {
+          this.open = false;
+          this.cageOn = false;
+          this.sceneEl = this.el.sceneEl;
+          this._p = new THREE.Vector3();
+          this._d = new THREE.Vector3();
+
+          const main = this.makeButton("MENU", () => this.toggleMenu(), "#1a4a85");
+          main.setAttribute("position", "0 0 0");
+          this.el.appendChild(main);
+
+          this.sub = null;
+          this.items = [
+            ["+ Ball", () => this.spawnBall()],
+            ["+ Zylinder (rot)", () => this.spawnCylinder()],
+            ["Kaefig an/aus", () => this.toggleCage()],
+            ["Schliessen", () => this.toggleMenu(false)],
+          ];
+
+          this.buildCage();
+        },
+
+        // Untermenue beim Oeffnen bauen, beim Schliessen entfernen -> es ist
+        // nur dann im Raycaster, wenn es auch sichtbar ist.
+        toggleMenu(force) {
+          const want = force === undefined ? !this.open : force;
+          if (want === this.open) return;
+          this.open = want;
+          if (this.open) {
+            this.sub = document.createElement("a-entity");
+            this.items.forEach(([label, fn], i) => {
+              const b = this.makeButton(label, fn);
+              b.setAttribute("position", "0 " + (-0.34 * (i + 1)) + " 0");
+              this.sub.appendChild(b);
+            });
+            this.el.appendChild(this.sub);
+          } else if (this.sub) {
+            this.sub.remove();
+            this.sub = null;
+          }
+        },
+
+        makeButton(label, onClick, color = "#12325c") {
+          const w = 1.1, h = 0.26;
+          const btn = document.createElement("a-entity");
+          btn.classList.add("gaze");
+
+          const border = document.createElement("a-plane");
+          border.setAttribute("width", w + 0.04);
+          border.setAttribute("height", h + 0.04);
+          border.setAttribute("position", "0 0 -0.01");
+          border.setAttribute("material", "shader: flat; color: #7fb2e8; opacity: 0.5; side: double; transparent: true");
+          btn.appendChild(border);
+
+          const bg = document.createElement("a-plane");
+          bg.setAttribute("width", w);
+          bg.setAttribute("height", h);
+          bg.setAttribute("material", "shader: flat; color: " + color + "; opacity: 0.9; side: double; transparent: true");
+          btn.appendChild(bg);
+
+          const t = document.createElement("a-entity");
+          t.setAttribute("text", { value: label, align: "center", color: "#eaf2ff", width: 1 });
+          t.setAttribute("position", "0 0 0.01");
+          btn.appendChild(t);
+
+          // Events bubblen von den Kind-Meshes hoch zum Button
+          btn.addEventListener("mouseenter", () => bg.setAttribute("material", "color", "#2a78c8"));
+          btn.addEventListener("mouseleave", () => bg.setAttribute("material", "color", color));
+          btn.addEventListener("click", onClick);
+          return btn;
+        },
+
+        spawnInFront(el, dist = 2.5) {
+          const cam = this.sceneEl.camera;
+          cam.getWorldPosition(this._p);
+          cam.getWorldDirection(this._d);
+          this._p.addScaledVector(this._d, dist);
+          el.setAttribute("position", this._p.x + " " + this._p.y + " " + this._p.z);
+          this.sceneEl.appendChild(el);
+        },
+
+        spawnBall() {
+          const s = document.createElement("a-sphere");
+          s.setAttribute("radius", 0.4);
+          s.setAttribute("material", "shader: standard; color: #7FB2E8; emissive: #2b6fd6; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4");
+          this.spawnInFront(s);
+        },
+
+        spawnCylinder() {
+          const c = document.createElement("a-cylinder");
+          c.setAttribute("radius", 0.32);
+          c.setAttribute("height", 1.2);
+          c.setAttribute("material", "shader: standard; color: #FF4D5E; emissive: #b3202e; emissiveIntensity: 0.5; metalness: 0.3; roughness: 0.4");
+          this.spawnInFront(c);
+        },
+
+        buildCage() {
+          const cage = document.createElement("a-entity");
+          cage.setAttribute("position", "0 1.6 0");
+          cage.setAttribute("visible", "false");
+          const R = 1.7, barH = 2.6, bars = 14;
+          const mat = "shader: flat; color: #7FB2E8; opacity: 0.8; transparent: true";
+          for (let k = 0; k < bars; k++) {
+            const a = (k / bars) * Math.PI * 2;
+            const bar = document.createElement("a-cylinder");
+            bar.setAttribute("radius", 0.025);
+            bar.setAttribute("height", barH);
+            bar.setAttribute("position", (R * Math.cos(a)) + " 0 " + (R * Math.sin(a)));
+            bar.setAttribute("material", mat);
+            cage.appendChild(bar);
+          }
+          for (const y of [1.25, -1.25]) {
+            const ring = document.createElement("a-torus");
+            ring.setAttribute("radius", R);
+            ring.setAttribute("radius-tubular", 0.03);
+            ring.setAttribute("rotation", "90 0 0");
+            ring.setAttribute("position", "0 " + y + " 0");
+            ring.setAttribute("material", mat);
+            cage.appendChild(ring);
+          }
+          this.sceneEl.appendChild(cage);
+          this.cage = cage;
+        },
+
+        toggleCage() {
+          this.cageOn = !this.cageOn;
+          this.cage.setAttribute("visible", this.cageOn);
+        },
+      });
+
       // Sternenfeld als ruhiger Hintergrund -------------------------------
       AFRAME.registerComponent("stars", {
         init() {
@@ -280,7 +416,20 @@
       <a-entity iron-graph></a-entity>
 
       <a-entity id="rig" position="0 0 0">
-        <a-camera look-controls="pointerLockEnabled: false" wasd-controls-enabled="false"></a-camera>
+        <a-camera look-controls="pointerLockEnabled: false" wasd-controls-enabled="false">
+          <a-cursor
+            fuse="true"
+            fuse-timeout="900"
+            raycaster="objects: .gaze; far: 30"
+            geometry="primitive: ring; radiusInner: 0.012; radiusOuter: 0.02"
+            material="color: #9fd0ff; shader: flat; opacity: 0.9"
+            animation__fuse="property: scale; startEvents: fusing; from: 1 1 1; to: 0.3 0.3 0.3; dur: 900; easing: easeInQuad"
+            animation__leave="property: scale; startEvents: mouseleave; to: 1 1 1; dur: 150">
+          </a-cursor>
+        </a-camera>
+
+        <!-- Welt-fixes Gaze-Menue vor dem Nutzer -->
+        <a-entity gaze-menu position="0 1.45 -2"></a-entity>
       </a-entity>
     </a-scene>
   </body>
