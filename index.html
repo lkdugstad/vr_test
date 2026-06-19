@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <title>VR-Test · Holo-Graph</title>
+    <title>VR · Immersive Szenen</title>
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 
     <style>
@@ -16,7 +16,6 @@
         border: 1px solid #7fb2e8; border-radius: 9px; padding: 11px 18px;
         box-shadow: 0 0 18px rgba(60, 150, 255, 0.45);
       }
-      /* Im Stereo-Modus eine dezente Mittellinie als Trennung der Augen */
       body.vr-active::after {
         content: ""; position: fixed; top: 0; bottom: 0; left: 50%; width: 1px;
         background: rgba(127, 178, 232, 0.25); z-index: 9998; pointer-events: none;
@@ -26,182 +25,379 @@
     <script>
       /* global AFRAME, THREE */
 
-      // Weiche, runde Glow-Textur (radial) fuer leuchtende Punkte ----------
-      function makeGlowTexture() {
+      // ===================== Hilfsfunktionen ==============================
+      let _glow = null;
+      function glowTexture() {
+        if (_glow) return _glow;
         const c = document.createElement("canvas");
         c.width = c.height = 64;
         const ctx = c.getContext("2d");
         const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
         g.addColorStop(0.0, "rgba(255,255,255,1)");
         g.addColorStop(0.2, "rgba(210,235,255,0.95)");
-        g.addColorStop(0.5, "rgba(120,180,255,0.35)");
+        g.addColorStop(0.5, "rgba(150,200,255,0.35)");
         g.addColorStop(1.0, "rgba(120,180,255,0)");
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, 64, 64);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+        _glow = new THREE.CanvasTexture(c);
+        return _glow;
+      }
+
+      function vGradient(stops) {
+        const c = document.createElement("canvas");
+        c.width = 8; c.height = 128;
+        const ctx = c.getContext("2d");
+        const g = ctx.createLinearGradient(0, 0, 0, 128);
+        stops.forEach(([o, col]) => g.addColorStop(o, col));
+        ctx.fillStyle = g; ctx.fillRect(0, 0, 8, 128);
         return new THREE.CanvasTexture(c);
       }
 
-      // ====================================================================
-      //  iron-graph: erzeugt eine leuchtende Knoten-Wolke + Verbindungsnetz
-      //  rund um den Nutzer, plus rotierende "Elektronenbahn"-Ringe.
-      // ====================================================================
-      AFRAME.registerComponent("iron-graph", {
-        schema: {
-          nodes: { default: 90 },
-          rMin: { default: 2.8 },
-          rMax: { default: 7.0 },
-        },
+      function starfield(count, rIn, rOut, color = "#9fc4ff", size = 0.14) {
+        const pos = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+          const u = Math.random(), v = Math.random();
+          const th = 2 * Math.PI * u, ph = Math.acos(2 * v - 1);
+          const r = rIn + Math.random() * (rOut - rIn);
+          pos.set([r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)], i * 3);
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const m = new THREE.PointsMaterial({
+          color: new THREE.Color(color), size, transparent: true,
+          opacity: 0.85, depthWrite: false, sizeAttenuation: true,
+        });
+        return new THREE.Points(g, m);
+      }
 
+      function disposeDeep(obj) {
+        // Texturen NICHT freigeben: glowTexture() ist gecacht und wird von
+        // mehreren Szenen geteilt. Geometrie/Material reichen fuers Aufraeumen.
+        obj.traverse((o) => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) {
+            const arr = Array.isArray(o.material) ? o.material : [o.material];
+            arr.forEach((m) => m.dispose());
+          }
+        });
+      }
+
+      // ===================== Szenen-Definitionen ==========================
+      // Jede build()-Funktion fuellt den Manager (m) mit THREE-Objekten
+      // (m.add) und optionalen Update-Funktionen (m.onUpdate).
+
+      // --- 1) Holo-Graph (Iron-Man-Atom) ---------------------------------
+      function buildHolograph(m) {
+        m.add(starfield(1200, 22, 60));
+        const tex = glowTexture();
+        const group = new THREE.Group();
+        group.position.set(0, 1.6, 0);
+        m.add(group);
+
+        const N = 90, rMin = 2.8, rMax = 7;
+        const pal = ["#7FB2E8", "#bfe0ff", "#35D6C2", "#FFC04D"];
+        const pts = [], nPos = new Float32Array(N * 3), nCol = new Float32Array(N * 3);
+        for (let i = 0; i < N; i++) {
+          const u = Math.random(), v = Math.random();
+          const th = 2 * Math.PI * u, ph = Math.acos(2 * v - 1);
+          const r = rMin + Math.random() * (rMax - rMin);
+          const x = r * Math.sin(ph) * Math.cos(th), y = r * Math.cos(ph) * 0.75, z = r * Math.sin(ph) * Math.sin(th);
+          pts.push(new THREE.Vector3(x, y, z));
+          nPos.set([x, y, z], i * 3);
+          const rr = Math.random();
+          const col = new THREE.Color(rr < 0.08 ? pal[3] : rr < 0.24 ? pal[2] : rr < 0.55 ? pal[1] : pal[0]);
+          nCol.set([col.r, col.g, col.b], i * 3);
+        }
+        const ng = new THREE.BufferGeometry();
+        ng.setAttribute("position", new THREE.BufferAttribute(nPos, 3));
+        ng.setAttribute("color", new THREE.BufferAttribute(nCol, 3));
+        group.add(new THREE.Points(ng, new THREE.PointsMaterial({
+          size: 0.9, map: tex, vertexColors: true, transparent: true,
+          blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+        })));
+
+        const seen = new Set(), lp = [], lc = [];
+        for (let i = 0; i < N; i++) {
+          const d = [];
+          for (let j = 0; j < N; j++) if (i !== j) d.push([j, pts[i].distanceToSquared(pts[j])]);
+          d.sort((a, b) => a[1] - b[1]);
+          for (let k = 0; k < 2; k++) {
+            const j = d[k][0], key = i < j ? i + "_" + j : j + "_" + i;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            lp.push(pts[i].x, pts[i].y, pts[i].z, pts[j].x, pts[j].y, pts[j].z);
+            lc.push(0.35, 0.6, 0.95, 0.35, 0.6, 0.95);
+          }
+        }
+        const lg = new THREE.BufferGeometry();
+        lg.setAttribute("position", new THREE.Float32BufferAttribute(lp, 3));
+        lg.setAttribute("color", new THREE.Float32BufferAttribute(lc, 3));
+        group.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({
+          vertexColors: true, transparent: true, opacity: 0.55,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        })));
+
+        const rings = [];
+        ["#7FB2E8", "#35D6C2", "#9fd0ff"].forEach((c, i) => {
+          const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(4.2 + i * 0.9, 0.012, 8, 140),
+            new THREE.MeshBasicMaterial({ color: new THREE.Color(c), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false })
+          );
+          ring.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+          ring.userData = { spd: 0.0002 + Math.random() * 0.0002, ax: i % 2 ? "y" : "x" };
+          group.add(ring); rings.push(ring);
+        });
+
+        const cg = new THREE.BufferGeometry();
+        cg.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+        const coreMat = new THREE.PointsMaterial({ size: 5.5, map: tex, color: new THREE.Color("#dff0ff"), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+        group.add(new THREE.Points(cg, coreMat));
+
+        m.onUpdate((t, dt) => {
+          group.rotation.y += dt * 0.00006;
+          group.rotation.x = 0.12 * Math.sin(t * 0.00008);
+          rings.forEach((r) => { r.rotation[r.userData.ax] += dt * r.userData.spd; });
+          coreMat.size = 5.5 + 1.4 * Math.sin(t * 0.0018);
+        });
+      }
+
+      // --- 2) Kosmos (Sonnensystem um dich) ------------------------------
+      function buildKosmos(m) {
+        m.add(starfield(1700, 30, 70, "#cfe0ff", 0.16));
+        m.add(new THREE.AmbientLight(0x223355, 0.25));
+        const sun = new THREE.PointLight(0xfff0d0, 2.4, 0, 1.0);
+        sun.position.set(0, 1.6, 0); m.add(sun);
+
+        const tex = glowTexture();
+        const sg = new THREE.BufferGeometry();
+        sg.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 1.6, 0]), 3));
+        const sunMat = new THREE.PointsMaterial({ size: 9, map: tex, color: new THREE.Color("#ffd27a"), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+        m.add(new THREE.Points(sg, sunMat));
+
+        const planets = [
+          { r: 2.4, s: 0.18, c: 0x9fd0ff, sp: 0.00040, sn: 0.002 },
+          { r: 3.3, s: 0.30, c: 0xffc04d, sp: 0.00030, sn: 0.0016, ring: true },
+          { r: 4.4, s: 0.22, c: 0xff7a5c, sp: 0.00024, sn: 0.0014 },
+          { r: 5.7, s: 0.42, c: 0x6cc6ff, sp: 0.00018, sn: 0.0012 },
+          { r: 7.1, s: 0.26, c: 0xb5a0ff, sp: 0.00013, sn: 0.0010 },
+          { r: 8.5, s: 0.34, c: 0x7fffd0, sp: 0.00010, sn: 0.0008 },
+        ];
+        const list = [];
+        planets.forEach((p) => {
+          const pivot = new THREE.Object3D();
+          pivot.position.set(0, 1.6, 0);
+          pivot.rotation.x = (Math.random() - 0.5) * 0.5;
+          pivot.rotation.z = (Math.random() - 0.5) * 0.3;
+          pivot.rotation.y = Math.random() * Math.PI * 2;
+          const planet = new THREE.Mesh(
+            new THREE.SphereGeometry(p.s, 28, 20),
+            new THREE.MeshStandardMaterial({ color: p.c, roughness: 0.75, metalness: 0.1, emissive: new THREE.Color(p.c).multiplyScalar(0.06) })
+          );
+          planet.position.set(p.r, 0, 0);
+          pivot.add(planet);
+          if (p.ring) {
+            const ring = new THREE.Mesh(
+              new THREE.TorusGeometry(p.s * 1.9, p.s * 0.5, 2, 60),
+              new THREE.MeshBasicMaterial({ color: 0xe8d6a0, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+            );
+            ring.scale.y = 0.18; ring.rotation.x = Math.PI / 2.4; planet.add(ring);
+          }
+          const cpts = [];
+          for (let a = 0; a <= 64; a++) { const an = (a / 64) * Math.PI * 2; cpts.push(new THREE.Vector3(p.r * Math.cos(an), 0, p.r * Math.sin(an))); }
+          const orbit = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(cpts), new THREE.LineBasicMaterial({ color: 0x4a78b8, transparent: true, opacity: 0.25 }));
+          pivot.add(orbit);
+          m.add(pivot);
+          list.push({ pivot, planet, sp: p.sp, sn: p.sn });
+        });
+
+        m.onUpdate((t, dt) => {
+          sunMat.size = 9 + 1.5 * Math.sin(t * 0.001);
+          list.forEach((o) => { o.pivot.rotation.y += dt * o.sp; o.planet.rotation.y += dt * o.sn; });
+        });
+      }
+
+      // --- 3) Ozean (Unterwasser) ----------------------------------------
+      function buildOzean(m) {
+        // Meeresboden
+        const floor = new THREE.Mesh(
+          new THREE.PlaneGeometry(60, 60),
+          new THREE.MeshBasicMaterial({ color: 0x062b33 })
+        );
+        floor.rotation.x = -Math.PI / 2; floor.position.y = -1.2; m.add(floor);
+
+        // Lichtstrahlen von oben
+        const rayTex = vGradient([[0, "rgba(190,235,255,0.55)"], [0.5, "rgba(150,210,255,0.14)"], [1, "rgba(120,180,255,0)"]]);
+        const rays = new THREE.Group();
+        for (let i = 0; i < 7; i++) {
+          const a = Math.random() * Math.PI * 2, rad = 1 + Math.random() * 4.5;
+          const ray = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.5 + Math.random() * 0.5, 13),
+            new THREE.MeshBasicMaterial({ map: rayTex, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+          );
+          ray.position.set(rad * Math.cos(a), 5, rad * Math.sin(a));
+          ray.rotation.y = Math.random() * Math.PI;
+          ray.rotation.z = (Math.random() - 0.5) * 0.3;
+          ray.userData.ph = Math.random() * 6;
+          rays.add(ray);
+        }
+        m.add(rays);
+
+        // aufsteigende Luftblasen
+        const NB = 260, bp = new Float32Array(NB * 3), spd = new Float32Array(NB);
+        for (let i = 0; i < NB; i++) {
+          const a = Math.random() * Math.PI * 2, rad = Math.random() * 5;
+          bp.set([rad * Math.cos(a), Math.random() * 8 - 1, rad * Math.sin(a)], i * 3);
+          spd[i] = 0.0006 + Math.random() * 0.0012;
+        }
+        const bg = new THREE.BufferGeometry();
+        bg.setAttribute("position", new THREE.BufferAttribute(bp, 3));
+        const bubbles = new THREE.Points(bg, new THREE.PointsMaterial({ size: 0.12, map: glowTexture(), color: 0xcdeeff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true }));
+        m.add(bubbles);
+
+        // leuchtende Quallen
+        const jellies = [];
+        const jcolors = [0x7fffe0, 0xff8fd6, 0x9fb4ff, 0x7effc4];
+        for (let i = 0; i < 4; i++) {
+          const col = jcolors[i % jcolors.length];
+          const grp = new THREE.Group();
+          const a = Math.random() * Math.PI * 2, rad = 2.1 + Math.random() * 1.8;
+          grp.position.set(rad * Math.cos(a), 1.4 + Math.random() * 1.6, rad * Math.sin(a));
+          const bell = new THREE.Mesh(
+            new THREE.SphereGeometry(0.4, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.55),
+            new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+          );
+          grp.add(bell);
+          const rim = new THREE.Mesh(new THREE.TorusGeometry(0.37, 0.02, 8, 40), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+          rim.rotation.x = Math.PI / 2; rim.position.y = 0.02; grp.add(rim);
+          const seg = [];
+          for (let k = 0; k < 10; k++) {
+            const ta = (k / 10) * Math.PI * 2, tx = 0.3 * Math.cos(ta), tz = 0.3 * Math.sin(ta);
+            let px = tx, py = 0, pz = tz;
+            for (let s = 1; s <= 6; s++) {
+              const ny = py - 0.13, nx = tx * (1 - 0.04 * s), nz = tz * (1 - 0.04 * s);
+              seg.push(px, py, pz, nx, ny, nz); px = nx; py = ny; pz = nz;
+            }
+          }
+          const tg = new THREE.BufferGeometry();
+          tg.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+          grp.add(new THREE.LineSegments(tg, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false })));
+          grp.userData = { ph: Math.random() * 6, a0: a, rad, baseY: grp.position.y, drift: 0.00005 + Math.random() * 0.00006 };
+          m.add(grp); jellies.push(grp);
+        }
+
+        m.onUpdate((t, dt) => {
+          const bpos = bubbles.geometry.attributes.position.array;
+          for (let i = 0; i < NB; i++) {
+            bpos[i * 3 + 1] += spd[i] * dt;
+            if (bpos[i * 3 + 1] > 8) { bpos[i * 3 + 1] = -1; }
+          }
+          bubbles.geometry.attributes.position.needsUpdate = true;
+          rays.children.forEach((r) => { r.material.opacity = 0.35 + 0.2 * Math.sin(t * 0.0008 + r.userData.ph); });
+          jellies.forEach((j) => {
+            const u = j.userData;
+            const pulse = 1 + 0.16 * Math.sin(t * 0.0028 + u.ph);
+            j.scale.set(1, pulse, 1);
+            const ang = u.a0 + t * u.drift;
+            j.position.x = u.rad * Math.cos(ang);
+            j.position.z = u.rad * Math.sin(ang);
+            j.position.y = u.baseY + 0.25 * Math.sin(t * 0.0009 + u.ph);
+          });
+        });
+      }
+
+      // --- 4) Aurora (Polarnacht) ----------------------------------------
+      function buildAurora(m) {
+        m.add(starfield(1800, 25, 70, "#dfe8ff", 0.12));
+
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshBasicMaterial({ color: 0x03060f }));
+        ground.rotation.x = -Math.PI / 2; ground.position.y = -0.5; m.add(ground);
+
+        // Berge am Horizont
+        const mts = new THREE.Group();
+        for (let i = 0; i < 22; i++) {
+          const a = (i / 22) * Math.PI * 2, rad = 16 + Math.random() * 4;
+          const h = 2.5 + Math.random() * 3.5;
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(2 + Math.random() * 2, h, 4), new THREE.MeshBasicMaterial({ color: 0x05070f }));
+          cone.position.set(rad * Math.cos(a), h / 2 - 0.5, rad * Math.sin(a));
+          cone.rotation.y = Math.random() * Math.PI; mts.add(cone);
+        }
+        m.add(mts);
+
+        // Aurora-Vorhaenge
+        const aTex = vGradient([[0, "rgba(120,255,180,0)"], [0.28, "rgba(90,255,170,0.55)"], [0.6, "rgba(70,200,255,0.4)"], [1, "rgba(40,120,255,0)"]]);
+        const curtains = [];
+        const cz = [-6, -9.5, -4.5];
+        cz.forEach((z, i) => {
+          const geo = new THREE.PlaneGeometry(20, 6, 60, 10);
+          geo.userData.base = geo.attributes.position.array.slice(0);
+          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: aTex, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+          mesh.position.set((i - 1) * 3, 5.5, z);
+          mesh.rotation.y = (Math.random() - 0.5) * 0.5;
+          mesh.userData.ph = Math.random() * 6;
+          m.add(mesh); curtains.push(mesh);
+        });
+
+        m.onUpdate((t) => {
+          curtains.forEach((c, ci) => {
+            const pos = c.geometry.attributes.position.array;
+            const base = c.geometry.userData.base;
+            for (let i = 0; i < pos.length; i += 3) {
+              const x = base[i], y = base[i + 1];
+              pos[i + 2] = 0.9 * Math.sin(0.5 * x + t * 0.0007 + ci + c.userData.ph)
+                         + 0.5 * Math.sin(0.27 * x - t * 0.0005)
+                         + 0.3 * Math.sin(0.4 * y + t * 0.0009);
+            }
+            c.geometry.attributes.position.needsUpdate = true;
+            c.material.opacity = 0.45 + 0.2 * Math.sin(t * 0.0006 + ci);
+          });
+        });
+      }
+
+      const SCENES = {
+        holograph: { label: "Holo-Graph", bg: "#05070D", fog: "type: exponential; density: 0", build: buildHolograph },
+        kosmos:    { label: "Kosmos",     bg: "#02030a", fog: "type: exponential; density: 0", build: buildKosmos },
+        ozean:     { label: "Ozean",      bg: "#06303a", fog: "type: exponential; color: #06303a; density: 0.055", build: buildOzean },
+        aurora:    { label: "Aurora",     bg: "#04060f", fog: "type: exponential; color: #04060f; density: 0.018", build: buildAurora },
+      };
+
+      // ===================== Szenen-Manager ==============================
+      AFRAME.registerComponent("scene-manager", {
         init() {
-          const N = this.data.nodes;
-          const tex = makeGlowTexture();
-
-          // Gruppe sitzt auf Augenhoehe -> Nutzer steht in der Mitte
-          this.group = new THREE.Group();
-          this.group.position.set(0, 1.6, 0);
-          this.el.setObject3D("graph", this.group);
-
-          // --- Farbpalette (ueberwiegend kuehles Blau, Akzente Cyan/Gold) --
-          const C_BLUE = new THREE.Color("#7FB2E8");
-          const C_LIGHT = new THREE.Color("#bfe0ff");
-          const C_CYAN = new THREE.Color("#35D6C2");
-          const C_GOLD = new THREE.Color("#FFC04D");
-          const pick = () => {
-            const r = Math.random();
-            if (r < 0.08) return C_GOLD;
-            if (r < 0.24) return C_CYAN;
-            if (r < 0.55) return C_LIGHT;
-            return C_BLUE;
-          };
-
-          // --- Knoten gleichmaessig in einer Kugelschale verteilen ---------
-          const pts = [];
-          const nodePos = new Float32Array(N * 3);
-          const nodeCol = new Float32Array(N * 3);
-          for (let i = 0; i < N; i++) {
-            const u = Math.random(), v = Math.random();
-            const th = 2 * Math.PI * u;
-            const ph = Math.acos(2 * v - 1);
-            const r = this.data.rMin + Math.random() * (this.data.rMax - this.data.rMin);
-            const x = r * Math.sin(ph) * Math.cos(th);
-            const y = r * Math.cos(ph) * 0.75; // vertikal etwas stauchen -> Scheibe/Atom
-            const z = r * Math.sin(ph) * Math.sin(th);
-            pts.push(new THREE.Vector3(x, y, z));
-            nodePos.set([x, y, z], i * 3);
-            const col = pick();
-            nodeCol.set([col.r, col.g, col.b], i * 3);
-          }
-
-          const nodeGeo = new THREE.BufferGeometry();
-          nodeGeo.setAttribute("position", new THREE.BufferAttribute(nodePos, 3));
-          nodeGeo.setAttribute("color", new THREE.BufferAttribute(nodeCol, 3));
-          const nodeMat = new THREE.PointsMaterial({
-            size: 0.9, map: tex, vertexColors: true,
-            transparent: true, blending: THREE.AdditiveBlending,
-            depthWrite: false, sizeAttenuation: true,
-          });
-          this.nodes = new THREE.Points(nodeGeo, nodeMat);
-          this.group.add(this.nodes);
-
-          // --- Verbindungsnetz: jeder Knoten zu seinen 2 naechsten ---------
-          const seen = new Set();
-          const linePos = [];
-          const lineCol = [];
-          for (let i = 0; i < N; i++) {
-            const d = [];
-            for (let j = 0; j < N; j++) {
-              if (i === j) continue;
-              d.push([j, pts[i].distanceToSquared(pts[j])]);
-            }
-            d.sort((a, b) => a[1] - b[1]);
-            for (let k = 0; k < 2; k++) {
-              const j = d[k][0];
-              const key = i < j ? i + "_" + j : j + "_" + i;
-              if (seen.has(key)) continue;
-              seen.add(key);
-              linePos.push(pts[i].x, pts[i].y, pts[i].z, pts[j].x, pts[j].y, pts[j].z);
-              for (let e = 0; e < 2; e++) lineCol.push(0.35, 0.6, 0.95); // gedaempftes Blau
-            }
-          }
-          const lineGeo = new THREE.BufferGeometry();
-          lineGeo.setAttribute("position", new THREE.Float32BufferAttribute(linePos, 3));
-          lineGeo.setAttribute("color", new THREE.Float32BufferAttribute(lineCol, 3));
-          const lineMat = new THREE.LineBasicMaterial({
-            vertexColors: true, transparent: true, opacity: 0.55,
-            blending: THREE.AdditiveBlending, depthWrite: false,
-          });
-          this.links = new THREE.LineSegments(lineGeo, lineMat);
-          this.group.add(this.links);
-
-          // --- "Elektronenbahn"-Ringe (Arc-Reactor-Feeling) ---------------
-          this.rings = [];
-          const ringColors = ["#7FB2E8", "#35D6C2", "#9fd0ff"];
-          for (let i = 0; i < 3; i++) {
-            const R = 4.2 + i * 0.9;
-            const geo = new THREE.TorusGeometry(R, 0.012, 8, 140);
-            const mat = new THREE.MeshBasicMaterial({
-              color: new THREE.Color(ringColors[i]),
-              transparent: true, opacity: 0.5,
-              blending: THREE.AdditiveBlending, depthWrite: false,
-            });
-            const ring = new THREE.Mesh(geo, mat);
-            ring.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-            ring.userData.spd = 0.00018 + Math.random() * 0.00022;
-            ring.userData.axis = i % 2 === 0 ? "x" : "y";
-            this.group.add(ring);
-            this.rings.push(ring);
-          }
-
-          // --- Kern-Glow in der Mitte (Reaktor) ----------------------------
-          const coreGeo = new THREE.BufferGeometry();
-          coreGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
-          this.coreMat = new THREE.PointsMaterial({
-            size: 5.5, map: tex, color: new THREE.Color("#dff0ff"),
-            transparent: true, blending: THREE.AdditiveBlending,
-            depthWrite: false, sizeAttenuation: true,
-          });
-          this.core = new THREE.Points(coreGeo, this.coreMat);
-          this.group.add(this.core);
+          this.root = this.el.object3D; // THREE.Scene – garantiert vorhanden
+          this.objects = [];
+          this.updaters = [];
+          window.SCENES_MGR = this;
+          this.load("holograph");
         },
-
-        tick(time, dt) {
-          if (!this.group) return;
-          // Gesamtrotation: langsam, leichte Neigung
-          this.group.rotation.y += dt * 0.00006;
-          this.group.rotation.x = 0.12 * Math.sin(time * 0.00008);
-          // Ringe einzeln drehen
-          for (const ring of this.rings) {
-            ring.rotation[ring.userData.axis] += dt * ring.userData.spd;
-          }
-          // Kern pulsiert sanft
-          if (this.coreMat) this.coreMat.size = 5.5 + 1.4 * Math.sin(time * 0.0018);
+        add(obj) { this.root.add(obj); this.objects.push(obj); },
+        onUpdate(fn) { this.updaters.push(fn); },
+        clearScene() {
+          this.objects.forEach((o) => { this.root.remove(o); disposeDeep(o); });
+          this.objects = []; this.updaters = [];
         },
-
-        remove() {
-          this.el.removeObject3D("graph");
+        load(name) {
+          const cfg = SCENES[name];
+          if (!cfg) return;
+          this.clearScene();
+          this.el.setAttribute("background", "color", cfg.bg);
+          this.el.setAttribute("fog", cfg.fog);
+          cfg.build(this);
+          this.current = name;
         },
+        tick(t, dt) { for (const f of this.updaters) f(t, dt); },
       });
 
-      // ====================================================================
-      //  cardboard: manueller Stereo-Split fuer iOS-Safari (kein WebXR noetig)
-      //  Rendert die Szene in zwei Viewports (linkes/rechtes Auge). Das
-      //  Kopf-Tracking kommt weiter von A-Frames look-controls (Gyroskop).
-      // ====================================================================
+      // ===================== Cardboard-Stereo (iOS) ======================
       AFRAME.registerComponent("cardboard", {
         init() {
           this.active = false;
           this.stereo = new THREE.StereoCamera();
-          this.stereo.aspect = 0.5;
-          this.stereo.eyeSep = 0.064;
+          this.stereo.aspect = 0.5; this.stereo.eyeSep = 0.064;
           this.size = new THREE.Vector2();
-
           if (this.el.renderer) this.patchRenderer();
           else this.el.addEventListener("loaded", () => this.patchRenderer(), { once: true });
-
           this.btn = document.getElementById("cardboard-btn");
           this.btn.addEventListener("click", () => this.toggle());
         },
-
         patchRenderer() {
           const renderer = this.el.renderer;
           const realRender = renderer.render.bind(renderer);
@@ -209,189 +405,102 @@
           renderer.render = function (scene, camera) {
             renderer.getSize(self.size);
             const w = self.size.width, h = self.size.height;
-            if (!self.active) {
-              // sicherstellen, dass der Viewport voll ist (nach Stereo-Frame)
-              renderer.setScissorTest(false);
-              renderer.setViewport(0, 0, w, h);
-              realRender(scene, camera);
-              return;
-            }
+            if (!self.active) { renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h); realRender(scene, camera); return; }
             scene.updateMatrixWorld();
             self.stereo.update(camera);
             if (renderer.autoClear) renderer.clear();
             renderer.setScissorTest(true);
-            renderer.setScissor(0, 0, w / 2, h);
-            renderer.setViewport(0, 0, w / 2, h);
-            realRender(scene, self.stereo.cameraL);
-            renderer.setScissor(w / 2, 0, w / 2, h);
-            renderer.setViewport(w / 2, 0, w / 2, h);
-            realRender(scene, self.stereo.cameraR);
+            renderer.setScissor(0, 0, w / 2, h); renderer.setViewport(0, 0, w / 2, h); realRender(scene, self.stereo.cameraL);
+            renderer.setScissor(w / 2, 0, w / 2, h); renderer.setViewport(w / 2, 0, w / 2, h); realRender(scene, self.stereo.cameraR);
             renderer.setScissorTest(false);
           };
         },
-
         toggle() {
           this.active = !this.active;
           this.btn.textContent = this.active ? "✕ Stereo beenden" : "⛶ Cardboard";
           document.body.classList.toggle("vr-active", this.active);
-          if (this.active) window.scrollTo(0, 1); // Adressleiste verstecken
+          if (this.active) window.scrollTo(0, 1);
         },
       });
 
-      // ====================================================================
-      //  gaze-menu: per Blick bedienbares Menue. Ein "MENU"-Button oeffnet
-      //  vier weitere Buttons (Ball / roter Zylinder / Kaefig / Schliessen).
-      //  Buttons tragen class "gaze"; der a-cursor feuert per Fuse 'click'.
-      // ====================================================================
+      // ===================== Schalen-Slot (Boden-Anordnung) ===============
+      // Legt ein Element auf einen Kreis um den Nutzer und kippt es zu ihm
+      // hoch -> Anmutung "in einer Schale stehen".
+      AFRAME.registerComponent("bowl-slot", {
+        schema: { a: { default: 0 }, r: { default: 1.5 }, y: { default: 0.32 } },
+        init() { this.place(); },
+        update() { this.place(); },
+        place() {
+          const { a, r, y } = this.data;
+          const o = this.el.object3D;
+          o.position.set(r * Math.sin(a), y, -r * Math.cos(a));
+          o.lookAt(0, 2.4, 0);     // Vorderseite schaut nach innen-oben
+          o.rotateY(Math.PI);      // +Z (Text) zum Nutzer
+        },
+      });
+
+      // ===================== Gaze-Menue (am Boden) ========================
       AFRAME.registerComponent("gaze-menu", {
         init() {
           this.open = false;
-          this.cageOn = false;
-          this.sceneEl = this.el.sceneEl;
-          this._p = new THREE.Vector3();
-          this._d = new THREE.Vector3();
-
           const main = this.makeButton("MENU", () => this.toggleMenu(), "#1a4a85");
-          main.setAttribute("position", "0 0 0");
+          main.setAttribute("bowl-slot", { a: 0, r: 0.62, y: 0.05 });
+          main.setAttribute("scale", "0.5 0.5 0.5");
           this.el.appendChild(main);
 
           this.sub = null;
           this.items = [
-            ["+ Ball", () => this.spawnBall()],
-            ["+ Zylinder (rot)", () => this.spawnCylinder()],
-            ["Kaefig an/aus", () => this.toggleCage()],
+            ["Holo-Graph", () => this.go("holograph")],
+            ["Kosmos", () => this.go("kosmos")],
+            ["Ozean", () => this.go("ozean")],
+            ["Aurora", () => this.go("aurora")],
             ["Schliessen", () => this.toggleMenu(false)],
           ];
-
-          this.buildCage();
         },
 
-        // Untermenue beim Oeffnen bauen, beim Schliessen entfernen -> es ist
-        // nur dann im Raycaster, wenn es auch sichtbar ist.
+        go(name) {
+          if (window.SCENES_MGR) window.SCENES_MGR.load(name);
+          this.toggleMenu(false);
+        },
+
         toggleMenu(force) {
           const want = force === undefined ? !this.open : force;
           if (want === this.open) return;
           this.open = want;
           if (this.open) {
             this.sub = document.createElement("a-entity");
+            const arc = THREE.MathUtils.degToRad(230);
+            const n = this.items.length;
             this.items.forEach(([label, fn], i) => {
               const b = this.makeButton(label, fn);
-              b.setAttribute("position", "0 " + (-0.44 * (i + 1)) + " 0");
+              const a = -arc / 2 + (n > 1 ? i / (n - 1) : 0.5) * arc;
+              b.setAttribute("bowl-slot", { a, r: 1.55, y: 0.3 });
+              b.setAttribute("scale", "0.85 0.85 0.85");
               this.sub.appendChild(b);
             });
             this.el.appendChild(this.sub);
           } else if (this.sub) {
-            this.sub.remove();
-            this.sub = null;
+            this.sub.remove(); this.sub = null;
           }
         },
 
         makeButton(label, onClick, color = "#12325c") {
           const w = 1.25, h = 0.34;
-          // EIN Entity mit Geometrie + Text: jeder Raycast-Treffer (Plane
-          // ODER Text-Mesh) mappt auf dieses el -> Events feuern direkt hier.
           const btn = document.createElement("a-entity");
           btn.classList.add("gaze");
           btn.setAttribute("geometry", { primitive: "plane", width: w, height: h });
           btn.setAttribute("material", "shader: flat; color: " + color + "; opacity: 0.92; side: double; transparent: true");
           btn.setAttribute("text", { value: label, align: "center", color: "#eaf2ff", width: 1.15, zOffset: 0.02 });
-
-          // dekorativer Rahmen (hinter der Plane, nur Optik)
           const border = document.createElement("a-plane");
-          border.setAttribute("width", w + 0.05);
-          border.setAttribute("height", h + 0.05);
+          border.setAttribute("width", w + 0.05); border.setAttribute("height", h + 0.05);
           border.setAttribute("position", "0 0 -0.01");
           border.setAttribute("material", "shader: flat; color: #7fb2e8; opacity: 0.5; side: double; transparent: true");
           btn.appendChild(border);
-
           btn.addEventListener("mouseenter", () => btn.setAttribute("material", "color", "#2a78c8"));
           btn.addEventListener("mouseleave", () => btn.setAttribute("material", "color", color));
           btn.addEventListener("click", onClick);
           return btn;
         },
-
-        spawnInFront(el, dist = 2.5) {
-          const cam = this.sceneEl.camera;
-          cam.getWorldPosition(this._p);
-          cam.getWorldDirection(this._d);
-          this._p.addScaledVector(this._d, dist);
-          el.setAttribute("position", this._p.x + " " + this._p.y + " " + this._p.z);
-          this.sceneEl.appendChild(el);
-        },
-
-        spawnBall() {
-          const s = document.createElement("a-sphere");
-          s.setAttribute("radius", 0.4);
-          s.setAttribute("material", "shader: standard; color: #7FB2E8; emissive: #2b6fd6; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4");
-          this.spawnInFront(s);
-        },
-
-        spawnCylinder() {
-          const c = document.createElement("a-cylinder");
-          c.setAttribute("radius", 0.32);
-          c.setAttribute("height", 1.2);
-          c.setAttribute("material", "shader: standard; color: #FF4D5E; emissive: #b3202e; emissiveIntensity: 0.5; metalness: 0.3; roughness: 0.4");
-          this.spawnInFront(c);
-        },
-
-        buildCage() {
-          const cage = document.createElement("a-entity");
-          cage.setAttribute("position", "0 1.6 0");
-          cage.setAttribute("visible", "false");
-          const R = 1.7, barH = 2.6, bars = 14;
-          const mat = "shader: flat; color: #7FB2E8; opacity: 0.8; transparent: true";
-          for (let k = 0; k < bars; k++) {
-            const a = (k / bars) * Math.PI * 2;
-            const bar = document.createElement("a-cylinder");
-            bar.setAttribute("radius", 0.025);
-            bar.setAttribute("height", barH);
-            bar.setAttribute("position", (R * Math.cos(a)) + " 0 " + (R * Math.sin(a)));
-            bar.setAttribute("material", mat);
-            cage.appendChild(bar);
-          }
-          for (const y of [1.25, -1.25]) {
-            const ring = document.createElement("a-torus");
-            ring.setAttribute("radius", R);
-            ring.setAttribute("radius-tubular", 0.03);
-            ring.setAttribute("rotation", "90 0 0");
-            ring.setAttribute("position", "0 " + y + " 0");
-            ring.setAttribute("material", mat);
-            cage.appendChild(ring);
-          }
-          this.sceneEl.appendChild(cage);
-          this.cage = cage;
-        },
-
-        toggleCage() {
-          this.cageOn = !this.cageOn;
-          this.cage.setAttribute("visible", this.cageOn);
-        },
-      });
-
-      // Sternenfeld als ruhiger Hintergrund -------------------------------
-      AFRAME.registerComponent("stars", {
-        init() {
-          const n = 1200, pos = new Float32Array(n * 3);
-          for (let i = 0; i < n; i++) {
-            const u = Math.random(), v = Math.random();
-            const th = 2 * Math.PI * u, ph = Math.acos(2 * v - 1);
-            const r = 22 + Math.random() * 14;
-            pos.set([
-              r * Math.sin(ph) * Math.cos(th),
-              r * Math.cos(ph),
-              r * Math.sin(ph) * Math.sin(th),
-            ], i * 3);
-          }
-          const geo = new THREE.BufferGeometry();
-          geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-          const mat = new THREE.PointsMaterial({
-            color: 0x9fc4ff, size: 0.13, transparent: true,
-            opacity: 0.7, depthWrite: false,
-          });
-          this.p = new THREE.Points(geo, mat);
-          this.el.setObject3D("stars", this.p);
-        },
-        tick(time) { if (this.p) this.p.rotation.y = time * 0.000004; },
       });
     </script>
   </head>
@@ -402,15 +511,14 @@
     <a-scene
       background="color: #05070D"
       renderer="colorManagement: true; antialias: true"
+      light="defaultLightsEnabled: false"
       device-orientation-permission-ui="enabled: true"
       vr-mode-ui="enabled: false"
+      scene-manager
       cardboard>
 
-      <a-entity stars></a-entity>
-      <a-entity iron-graph></a-entity>
-
       <a-entity id="rig" position="0 0 0">
-        <a-camera look-controls="pointerLockEnabled: false" wasd-controls-enabled="false">
+        <a-camera position="0 1.6 0" look-controls="pointerLockEnabled: false" wasd-controls-enabled="false">
           <a-cursor
             fuse="true"
             fuse-timeout="900"
@@ -422,8 +530,8 @@
           </a-cursor>
         </a-camera>
 
-        <!-- Welt-fixes Gaze-Menue vor dem Nutzer, auf Augenhoehe -->
-        <a-entity gaze-menu position="0 1.6 -1.9"></a-entity>
+        <!-- Gaze-Menue am Boden, um den Nutzer (Schale) -->
+        <a-entity gaze-menu position="0 0 0"></a-entity>
       </a-entity>
     </a-scene>
   </body>
